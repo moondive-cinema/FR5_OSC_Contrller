@@ -32,7 +32,7 @@ SDK_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__),
 if SDK_ROOT not in sys.path: # 경로 중복 추가 방지
     sys.path.insert(0, SDK_ROOT)
 try:
-    from Robot import RPC as FRRobot
+    import Robot as FRRobot
     print("✅ SDK import 성공")
 except Exception as e:
     print(f"🛑 SDK import 실패: {e}")
