@@ -306,6 +306,9 @@ class FR5OSCBridge:
         else:
             print(f"  [WRN] 'home' 좌표({DB_FILE})가 없어 홈 복귀 생략.")
 
+        # 🔹 종료 상태 브로드캐스트: current=0, target=0, moving=0, arrived=0
+        self._send_robot_operation(0, 0, 0, 0)
+
         # OSC 서버 종료
         try:
             print("  ➡️ OSC 서버 종료 중...")
