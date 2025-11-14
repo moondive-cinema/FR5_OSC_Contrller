@@ -657,6 +657,13 @@ class FR5OSCBridge:
                     self._last_hb_interval = hb_interval
                     t_hb = now
 
+                moving = 1 if (self.is_moving_preset or self.is_moving_jog) else 0
+                if self.is_moving_preset:
+                    target = self.target_slot_ui
+                else:
+                    target = self.current_slot
+                self._send_robot_operation(self.current_slot, target, moving, 0)
+
                 if prev_estop is None: prev_estop, prev_collision = estop, collision
                 else:
                     if prev_estop != estop: print("🛑 E-STOP ON" if estop else "✅ E-STOP OFF"); prev_estop = estop
