@@ -658,9 +658,15 @@ class FR5OSCBridge:
                     t_hb = now
 
                 moving = 1 if (self.is_moving_preset or self.is_moving_jog) else 0
+                # --- Target 결정 로직 패치 ---
                 if self.is_moving_preset:
+                    # 프리셋 이동이면 기존 로직 유지
                     target = self.target_slot_ui
+                elif self.is_moving_jog:
+                    # 🔥 조그(JOG) 중이면 target = 99로 보냄
+                    target = 99
                 else:
+                    # Idle 상태는 current_slot 그대로
                     target = self.current_slot
                 self._send_robot_operation(self.current_slot, target, moving, 0)
 
