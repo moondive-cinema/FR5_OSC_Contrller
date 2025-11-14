@@ -64,7 +64,7 @@ OSC_FEEDBACK_PORT = 9003          # Companion 피드백 수신 포트
 
 # ---------------- 설정: 프리셋 (Script 2) ----------------
 DB_FILE             = "fr5_presets.json"
-MOVE_VEL_PERCENT    = 50.0 # 프리셋 이동 속도
+MOVE_VEL_PERCENT    = 40.0 # 프리셋 이동 속도
 SLOTS = {
     0: "home",
     1: "cam1", 2: "cam2", 3: "cam3", 4: "cam4",
@@ -495,12 +495,17 @@ class FR5OSCBridge:
             self.target_slot_ui = target_slot
             self._send_robot_operation(self.current_slot, self.target_slot_ui, 1, 0) # moving=1
 
-            # MoveCart는 블로킹(blendT=-1.0)으로 호출됨 (SDK 3.9)
+
+            # 조그 속도와 프리셋 속도를 연동
+            move_vel = float(self.jog_vel_pct)
+            # 안전하게 0~100 클램프 (옵션이지만 있으면 좋음)
+            move_vel = max(0.0, min(100.0, move_vel))
+
             err = self.robot.MoveCart(
                 desc_pos=target_pose, 
                 tool=self.TOOL_IDX, 
                 user=self.USER_IDX, 
-                vel=MOVE_VEL_PERCENT
+                vel=move_vel
             )
             if err is None: err = 0
 
