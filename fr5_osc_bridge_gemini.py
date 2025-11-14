@@ -28,11 +28,11 @@ from functools import partial
 
 # ---------------- Fairino SDK 경로 ----------------
 SDK_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__),
-                                         'fairino-python-sdk-main', 'windows', 'fairino'))
+                                         'fairino-python-sdk-main', 'linux', 'fairino'))
 if SDK_ROOT not in sys.path: # 경로 중복 추가 방지
     sys.path.insert(0, SDK_ROOT)
 try:
-    import Robot as FRRobot
+    import Robot
     print("✅ SDK import 성공")
 except Exception as e:
     print(f"🛑 SDK import 실패: {e}")
@@ -161,10 +161,10 @@ class FR5OSCBridge:
         """로봇 연결 및 두 스크립트의 초기화 절차 통합"""
         print(f"[DBG] 🔌 FR5 연결 시도 → {ROBOT_IP}")
         try:
-            self.robot = FRRobot(ROBOT_IP)
+            self.robot = Robot.RPC(ROBOT_IP)
             print("[DBG] 🤖 FR5 연결 객체 생성 완료:", self.robot)
         except Exception as e:
-            print("[ERR] 🛑 FRRobot 연결 실패:", e)
+            print("[ERR] 🛑 Robot 연결 실패:", e)
             traceback.print_exc()
             sys.exit(1)
 

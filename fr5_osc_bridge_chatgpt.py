@@ -32,13 +32,13 @@ from functools import partial
 # ---------------- Fairino SDK 경로 ----------------
 SDK_ROOT = os.path.abspath(os.path.join(
     os.path.dirname(__file__),
-    'fairino-python-sdk-main', 'windows', 'fairino'
+    'fairino-python-sdk-main', 'linux', 'fairino'
 ))
 if SDK_ROOT not in sys.path:  # 경로 중복 추가 방지
     sys.path.insert(0, SDK_ROOT)
 
 try:
-    import Robot as FRRobot
+    import Robot
     print("✅ SDK import 성공")
 except Exception as e:
     print(f"🛑 SDK import 실패: {e}")
@@ -711,7 +711,7 @@ def main():
 
     # --- 로봇 연결 ---
     try:
-        robot = FRRobot(ROBOT_IP)
+        robot = Robot.RPC(ROBOT_IP)
         print(f"🤖 FR5 연결됨 → {ROBOT_IP}")
     except Exception as e:
         print(f"🛑 연결 실패: {e}")
