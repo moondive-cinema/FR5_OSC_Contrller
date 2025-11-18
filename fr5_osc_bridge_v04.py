@@ -247,10 +247,12 @@ class FR5OSCBridge:
         print("[DBG] map() 등록: /robot/move")
         self.disp.map("/robot/record/temp", self._cb_record_temp)
         print("[DBG] map() 등록: /robot/record/temp")
+        self.disp.map("/robot/terminate", self._cb_terminate)
+        print("[DBG] map() 등록: /robot/terminate")
         self.disp.map("/ping", lambda a,*b: print("✅ /ping 수신"))
         print("[DBG] map() 등록: /ping")
 
-        def _default_log(addr, *args):
+        def _default_log(addr, *args):print(f"    /robot/record/temp      (현재 [조인트+TCP] 위치 임시 저장/스왑 시작)")
             print(f"[RX] 알 수 없는 주소: {addr} {args}")
         self.disp.set_default_handler(_default_log)
 
@@ -276,6 +278,7 @@ class FR5OSCBridge:
         print(f"  [프리셋 명령]")
         print(f"    /robot/move [0~9]       (이동 또는 스왑 확정)")
         print(f"    /robot/record/temp      (현재 [조인트+TCP] 위치 임시 저장/스왑 시작)")
+        print(f"    /robot/terminate        (이 브릿지 스크립트 종료)")
         print(f"  [조그 명령]")
         print(f"    /fr5/jog/x, y, z, rx, ry, rz [1.0 | 0.0]")
         print("  종료: Ctrl+C\n")
@@ -765,6 +768,16 @@ class FR5OSCBridge:
             print("[UI] Slot LED all OFF")
         except Exception as e:
             print("[WRN] UI Slot LED OFF 송신 실패:", e)
+
+        # OSC 종료 콜백
+        def _cb_terminate(self, address, *args):
+            """OSC 메시지 수신 시 서버 종료"""
+            print(f"\n[STOP] 🛑 종료 명령 수신 ({address}). 서버를 종료합니다...")
+            
+            # self.server.shutdown()을 호출하여 serve_forever() 루프를 중지시킴
+            # 그러면 serve() 함수의 finally 블록이 실행되어 _shutdown()이 호출됨.
+            if self.server:
+                self.server.shutdown()
 
     # -----------------------------------------------------
     # --- 4. 텔레메트리 및 피드백 (Script 2) ---
