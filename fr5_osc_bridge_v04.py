@@ -769,15 +769,15 @@ class FR5OSCBridge:
         except Exception as e:
             print("[WRN] UI Slot LED OFF 송신 실패:", e)
 
-        # OSC 종료 콜백
-        def _cb_terminate(self, address, *args):
-            """OSC 메시지 수신 시 서버 종료"""
-            print(f"\n[STOP] 🛑 종료 명령 수신 ({address}). 서버를 종료합니다...")
-            
-            # self.server.shutdown()을 호출하여 serve_forever() 루프를 중지시킴
-            # 그러면 serve() 함수의 finally 블록이 실행되어 _shutdown()이 호출됨.
-            if self.server:
-                self.server.shutdown()
+    # OSC 종료 콜백
+    def _cb_terminate(self, address, *args):
+        """OSC 메시지 수신 시 서버 종료"""
+        print(f"\n[STOP] 🛑 종료 명령 수신 ({address}). 서버를 종료합니다...")
+        
+        # self.server.shutdown()을 호출하여 serve_forever() 루프를 중지시킴
+        # 그러면 serve() 함수의 finally 블록이 실행되어 _shutdown()이 호출됨.
+        if self.server:
+            self.server.shutdown()
 
     # -----------------------------------------------------
     # --- 4. 텔레메트리 및 피드백 (Script 2) ---
