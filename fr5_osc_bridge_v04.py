@@ -792,7 +792,26 @@ class FR5OSCBridge:
         print("[DBG] 텔레메트리 루프 정상 가동.")
         while not self.stop_flag:
             now = time.time()
-            
+
+            # --- Record-Arm 타임아웃 검사 및 해제 ---
+            if self.temp_pose is not None:
+                elapsed = now - self.temp_pose_timestamp
+                
+                # 타임아웃 시간(10.0초)을 초과했는지 확인
+                if elapsed >= RECORD_MODE_TIMEOUT:
+                    # 임시 데이터 초기화 (스왑 모드 해제)
+                    self.temp_pose = None
+                    self.temp_pose_timestamp = 0.0
+                    
+                    print(f"[UI] ⏳ Record-Arm 타임아웃 ({elapsed:.1f}초 경과).")
+
+                    # UI 피드백: armed 상태를 0으로 전송하여 LED 끔
+                    if self.ui_client:
+                        try: 
+                            self.ui_client.send_message("/ui/record/armed", 0)
+                        except Exception as e:
+                            print(f"[WRN] 타임아웃 해제 OSC 전송 실패: {e}")
+
             if self.axim_client:
                 # --- 10Hz 텔레메트리 ---
                 if now - t_pose >= 0.1: 
