@@ -252,7 +252,7 @@ class FR5OSCBridge:
         self.disp.map("/ping", lambda a,*b: print("✅ /ping 수신"))
         print("[DBG] map() 등록: /ping")
 
-        def _default_log(addr, *args):print(f"    /robot/record/temp      (현재 [조인트+TCP] 위치 임시 저장/스왑 시작)")
+        def _default_log(addr, *args):
             print(f"[RX] 알 수 없는 주소: {addr} {args}")
         self.disp.set_default_handler(_default_log)
 
