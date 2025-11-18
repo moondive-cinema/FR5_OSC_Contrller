@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-FR5 OSC Bridge - v05 (Simplified Architecture)
+FR5 OSC Bridge - v5.1 (Further Simplified)
 
-[v05 주요 변경사항]
-- 텔레메트리 루프 분해 (170줄 → 50줄): 책임 분리
-- SWAP 로직 단순화: 순환 armed 제거, 명확한 흐름
-- 상태 관리 통합: @property로 중복 체크 제거
-- Lock 패턴 통일: context manager 사용
-- DB 중복 로드 제거: 메모리 DB만 사용
-- 전체 코드: 947줄 → ~750줄 (약 21% 축소)
+[v5.1 추가 변경사항]
+- MOVE_VEL_PERCENT 제거, jog_vel_pct → vel_pct로 통일
+- _check_preset_format() 제거 (실행 시 불필요한 검사)
+- 불필요한 빈 except 제거
+- _round_pose 간소화 (is_joint 파라미터 제거)
+- 변수 초기화 최적화 (사용처에서 초기화)
+- 전체 코드: 899줄 → ~860줄
 
 [기능]
 1. 조그 컨트롤러: StartJOG, StopJOG
@@ -28,7 +28,6 @@ if SDK_ROOT not in sys.path:
     sys.path.insert(0, SDK_ROOT)
 try:
     import Robot
-    print("✅ SDK import 성공")
 except Exception as e:
     print(f"🛑 SDK import 실패: {e}")
     traceback.print_exc()
@@ -37,7 +36,6 @@ except Exception as e:
 # ---------------- python-osc ----------------------
 try:
     from pythonosc import dispatcher, osc_server, udp_client
-    print("✅ python-osc import 성공")
 except ImportError:
     print("🛑 python-osc 라이브러리 필요: pip install python-osc")
     sys.exit(1)
@@ -53,7 +51,6 @@ OSC_FEEDBACK_PORT = 9003
 
 DB_FILE             = "fr5_presets.json"
 RECORD_MODE_TIMEOUT = 10.0
-MOVE_VEL_PERCENT    = 40.0
 SLOTS = {
     0: "home",
     1: "cam1", 2: "cam2", 3: "cam3", 4: "cam4",
@@ -73,9 +70,9 @@ ALARM_BUSY      = 6
 JOG_REF_MOVE = 2
 JOG_REF_STOP = 3
 JOG_MAX_DIS  = 250.0
-JOG_VEL_PCT  = 40.0
-JOG_ACC_PCT  = 40.0
-VEL_PRESETS  = (10, 20, 40, 60, 95)
+VEL_PCT_DEFAULT = 40.0
+VEL_ACC_PCT     = 40.0
+VEL_PRESETS     = (10, 20, 40, 60, 95)
 AXIS_NB = {
     "x":1, "y":2, "z":3, "rx":4, "ry":5, "rz":6, "yaw":6
 }
@@ -99,14 +96,12 @@ class FR5OSCBridge:
         # OSC 클라이언트
         try:
             self.axim_client = udp_client.SimpleUDPClient(AXIM_IP, AXIM_PORT)
-            print(f"[DBG] Aximmetry 클라이언트 생성 -> {AXIM_IP}:{AXIM_PORT}")
         except Exception as e:
             self.axim_client = None
             print(f"[WRN] Aximmetry 클라이언트 생성 실패: {e}")
 
         try:
             self.ui_client = udp_client.SimpleUDPClient(OSC_FEEDBACK_IP, OSC_FEEDBACK_PORT)
-            print(f"[DBG] UI Feedback 클라이언트 생성 -> {OSC_FEEDBACK_IP}:{OSC_FEEDBACK_PORT}")
         except Exception as e:
             self.ui_client = None
             print(f"[WRN] UI Feedback 클라이언트 생성 실패: {e}")
@@ -114,15 +109,13 @@ class FR5OSCBridge:
         # 상태 변수
         self.jog_lock = threading.Lock()
         self.is_moving_jog = False
-        self.jog_vel_pct = JOG_VEL_PCT
+        self.vel_pct = VEL_PCT_DEFAULT
 
         self.preset_lock = threading.Lock()
         self.db_lock = threading.Lock()
         self.is_moving_preset = False
         self.current_slot = 0
         self.target_slot_ui = 0
-        self.seq_counter = 0
-        self.last_alarm_code = None
         self.arrived_pulse_end_time = 0.0
         
         with self.db_lock:
@@ -132,13 +125,8 @@ class FR5OSCBridge:
         self.temp_pose = None
         self.temp_pose_timestamp = 0.0
 
-        # 텔레메트리 캐시
-        self._last_comm_ok = None
-        self._last_system_state = None
-
         # 초기화
         self._init_robot()
-        self._check_preset_format()
         self._init_osc()
         self._init_telemetry_thread()
 
@@ -186,18 +174,15 @@ class FR5OSCBridge:
         print(f"[DBG] 🔌 FR5 연결 시도 → {ROBOT_IP}")
         try:
             self.robot = Robot.RPC(ROBOT_IP)
-            print("[DBG] 🤖 FR5 연결 객체 생성 완료:", self.robot)
         except Exception as e:
             print("[ERR] 🛑 Robot 연결 실패:", e)
             traceback.print_exc()
             sys.exit(1)
         
         try:
-            print("[DBG] ResetAllError() 호출")
             self.robot.ResetAllError()
             time.sleep(0.5)
 
-            print("[DBG] RobotEnable(1), Mode(0), DragTeachSwitch(0)")
             self.robot.RobotEnable(1)
             self.robot.Mode(0)
             self.robot.DragTeachSwitch(0)
@@ -216,8 +201,6 @@ class FR5OSCBridge:
 
     def _init_osc(self):
         """OSC 경로 등록"""
-        print("[DBG] OSC Dispatcher 구성 시작")
-
         for axis in AXIS_NB.keys():
             self.disp.map(f"/fr5/jog/{axis}", partial(self._cb_jog, axis=axis))
 
@@ -226,6 +209,10 @@ class FR5OSCBridge:
 
         self.disp.map("/fr5/jog/vel", self._cb_vel_arg)
         self.disp.map("/fr5/jog/vel/get", self._get_vel)
+        self.disp.map("/fr5/jog/rx0", self._cb_reset_rx)
+        self.disp.map("/fr5/jog/ry0", self._cb_reset_ry)
+        self.disp.map("/fr5/jog/rz0", self._cb_reset_rz)
+        self.disp.map("/fr5/jog/ra0", self._cb_reset_ra)
         self.disp.map("/robot/move", self._cb_move_slot)
         self.disp.map("/robot/record/temp", self._cb_record_temp)
         self.disp.map("/robot/terminate", self._cb_terminate)
@@ -233,7 +220,6 @@ class FR5OSCBridge:
 
         self.disp.set_default_handler(lambda addr, *args: print(f"[RX] 알 수 없는 주소: {addr} {args}"))
 
-        print(f"[DBG] OSC 서버 바인딩 시도: {OSC_LISTEN_IP}:{OSC_LISTEN_PORT}")
         try:
             self.server = osc_server.ThreadingOSCUDPServer(
                 (OSC_LISTEN_IP, OSC_LISTEN_PORT), self.disp
@@ -246,7 +232,7 @@ class FR5OSCBridge:
 
     def serve(self):
         """메인 실행 루프"""
-        print(f"\n--- 🤖 FR5 OSC 통합 브릿지 시작 (v05 - Simplified) ---")
+        print(f"\n--- 🤖 FR5 OSC 통합 브릿지 시작 (v5.1 - Further Simplified) ---")
         print(f"  수신 대기: {self.server.server_address[0]}:{self.server.server_address[1]}")
         print(f"  로봇 IP: {ROBOT_IP} (T:{self.TOOL_IDX}, U:{self.USER_IDX})")
         print(f"  [프리셋] /robot/move [0~9], /robot/record/temp")
@@ -275,8 +261,10 @@ class FR5OSCBridge:
         self._emit_speed_leds_off()
         self._emit_slot_leds_off()
         if self.ui_client:
-            try: self.ui_client.send_message("/ui/record/armed", 0)
-            except: pass
+            try:
+                self.ui_client.send_message("/ui/record/armed", 0)
+            except:
+                pass
 
         try:
             print("  ➡️ StopJOG 호출")
@@ -296,14 +284,16 @@ class FR5OSCBridge:
             if home_joint_pose and isinstance(home_joint_pose, list) and len(home_joint_pose) >= 6:
                 print("  ➡️ 홈 위치로 복귀 (MoveJ)...")
                 try:
-                    self.robot.MoveJ(joint_pos=home_joint_pose, tool=self.TOOL_IDX, user=self.USER_IDX, vel=MOVE_VEL_PERCENT)
+                    self.robot.MoveJ(joint_pos=home_joint_pose, tool=self.TOOL_IDX, 
+                                    user=self.USER_IDX, vel=self.vel_pct)
                     self.current_slot = 0
                 except Exception as e:
                     print(f"  [WRN] 홈(MoveJ) 이동 중 예외: {e}")
             elif home_cart_pose and isinstance(home_cart_pose, list) and len(home_cart_pose) >= 6:
                 print("  ➡️ 홈 위치로 복귀 (MoveCart)...")
                 try:
-                    self.robot.MoveCart(desc_pos=home_cart_pose, tool=self.TOOL_IDX, user=self.USER_IDX, vel=MOVE_VEL_PERCENT)
+                    self.robot.MoveCart(desc_pos=home_cart_pose, tool=self.TOOL_IDX, 
+                                       user=self.USER_IDX, vel=self.vel_pct)
                     self.current_slot = 0
                 except Exception as e:
                     print(f"  [WRN] 홈(MoveCart) 이동 중 예외: {e}")
@@ -363,14 +353,14 @@ class FR5OSCBridge:
                 dir = 1 if val > 0 else 0
                 
                 rc = self.robot.StartJOG(JOG_REF_MOVE, nb, dir, JOG_MAX_DIS,
-                                         self.jog_vel_pct, JOG_ACC_PCT)
+                                         self.vel_pct, VEL_ACC_PCT)
                 
                 if rc != 0:
                     print(f"[ERR] 🛑 StartJOG 실패: err={rc}")
                     self.is_moving_jog = False
                     return
 
-                print(f"[JOG] {axis:<3} {'+' if dir else '-'} vel={self.jog_vel_pct}%")
+                print(f"[JOG] {axis:<3} {'+' if dir else '-'} vel={self.vel_pct}%")
 
         except Exception as e:
             if "Lock busy" in str(e):
@@ -384,7 +374,7 @@ class FR5OSCBridge:
     def _cb_vel_preset(self, addr, *args, preset_val=None):
         """조그 속도 프리셋 버튼 처리"""
         if preset_val is not None:
-            self._set_jog_vel_pct(float(preset_val))
+            self._set_vel_pct(float(preset_val))
 
     def _cb_vel_arg(self, addr, *args):
         """/fr5/jog/vel <number> 형태 처리"""
@@ -393,34 +383,35 @@ class FR5OSCBridge:
             return
         try:
             val = float(args[0])
-            self._set_jog_vel_pct(val)
+            self._set_vel_pct(val)
         except Exception as e:
             print(f"[CFG] ⚠️ /fr5/jog/vel 인자 변환 실패: {args} ({e})")
 
-    def _set_jog_vel_pct(self, pct: float):
-        """조그 속도 설정"""
+    def _set_vel_pct(self, pct: float):
+        """속도 설정"""
         if self.is_moving_jog:
-            print(f"[CFG] 🚫 조그 속도 변경 무시 (조그 이동 중) 요청={pct}%")
+            print(f"[CFG] 🚫 속도 변경 무시 (조그 이동 중) 요청={pct}%")
             return
         
-        old = self.jog_vel_pct
+        old = self.vel_pct
         v = max(0.0, min(100.0, float(pct)))
-        self.jog_vel_pct = v
-        print(f"[CFG] ✅ JOG_VEL_PCT: {old:.1f}% -> {self.jog_vel_pct:.1f}%")
+        self.vel_pct = v
+        print(f"[CFG] ✅ VEL_PCT: {old:.1f}% -> {self.vel_pct:.1f}%")
         
         self._emit_speed_leds()
 
     def _get_vel(self, addr, *args):
-        """현재 조그 속도 값 전송"""
-        print(f"[CFG] ℹ️ JOG_VEL_PCT = {self.jog_vel_pct:.1f}%")
+        """현재 속도 값 전송"""
+        print(f"[CFG] ℹ️ VEL_PCT = {self.vel_pct:.1f}%")
         if self.ui_client:
-            self.ui_client.send_message("/ui/vel/value", float(self.jog_vel_pct))
+            self.ui_client.send_message("/ui/vel/value", float(self.vel_pct))
 
     def _emit_speed_leds(self):
-        """조그 속도 LED 갱신"""
-        if not self.ui_client: return
+        """속도 LED 갱신"""
+        if not self.ui_client:
+            return
         try:
-            current = float(self.jog_vel_pct)
+            current = float(self.vel_pct)
             for p in VEL_PRESETS:
                 on = 1 if abs(current - p) <= 0.5 else 0
                 self.ui_client.send_message(f"/ui/vel/{p}", on)
@@ -429,8 +420,9 @@ class FR5OSCBridge:
             print("[WRN] UI Speed LED 갱신 실패:", e)
 
     def _emit_speed_leds_off(self):
-        """종료 시 모든 조그 속도 LED OFF"""
-        if not self.ui_client: return
+        """종료 시 모든 속도 LED OFF"""
+        if not self.ui_client:
+            return
         try:
             for p in VEL_PRESETS:
                 self.ui_client.send_message(f"/ui/vel/{p}", 0)
@@ -438,20 +430,81 @@ class FR5OSCBridge:
         except Exception as e:
             print("[WRN] UI Speed LED OFF 송신 실패:", e)
 
+    def _cb_reset_rx(self, address, *args):
+        """rx 값을 0으로 리셋"""
+        self._reset_orientation(axis="rx")
+
+    def _cb_reset_ry(self, address, *args):
+        """ry 값을 0으로 리셋"""
+        self._reset_orientation(axis="ry")
+
+    def _cb_reset_rz(self, address, *args):
+        """rz 값을 0으로 리셋"""
+        self._reset_orientation(axis="rz")
+
+    def _cb_reset_ra(self, address, *args):
+        """rx, ry, rz 모두 0으로 리셋"""
+        self._reset_orientation(axis="all")
+
+    def _reset_orientation(self, axis):
+        """현재 위치에서 orientation을 0으로 리셋"""
+        if self.is_busy:
+            print(f"🚫 Orientation 리셋 거부: 로봇 이동 중")
+            return
+
+        try:
+            # 현재 TCP 위치 읽기
+            err, current_pose = self.robot.GetActualTCPPose(0)
+            if err != 0:
+                print(f"🛑 GetActualTCPPose 실패: err={err}")
+                return
+
+            # orientation 수정
+            target_pose = list(current_pose)
+            if axis == "rx":
+                target_pose[3] = 0.0
+                print(f"[ORIENT] rx → 0 (현재 위치 유지)")
+            elif axis == "ry":
+                target_pose[4] = 0.0
+                print(f"[ORIENT] ry → 0 (현재 위치 유지)")
+            elif axis == "rz":
+                target_pose[5] = 0.0
+                print(f"[ORIENT] rz → 0 (현재 위치 유지)")
+            elif axis == "all":
+                target_pose[3] = 0.0
+                target_pose[4] = 0.0
+                target_pose[5] = 0.0
+                print(f"[ORIENT] rx, ry, rz → 0 (현재 위치 유지)")
+
+            # MoveCart로 이동
+            err = self.robot.MoveCart(
+                desc_pos=target_pose,
+                tool=self.TOOL_IDX,
+                user=self.USER_IDX,
+                vel=self.vel_pct
+            )
+
+            if err != 0:
+                print(f"🛑 Orientation 리셋 실패: err={err}")
+            else:
+                print(f"✅ Orientation 리셋 완료")
+
+        except Exception as e:
+            print(f"🛑 _reset_orientation 예외: {e}")
+            traceback.print_exc()
+
     # -----------------------------------------------------
     # --- 3. 프리셋 리스너 ---
     # -----------------------------------------------------
 
-    def _round_pose(self, pose_list, is_joint=False):
+    def _round_pose(self, pose_list):
         """좌표값을 소수점 3자리로 반올림"""
-        if not pose_list or len(pose_list) < 6:
-            return [0.0] * 6
         return [round(float(v), 3) for v in pose_list[:6]]
 
     def _load_db(self, path):
         """프리셋 JSON 파일 로드"""
         if not os.path.exists(path):
-            print(f"⚠️ [V05] DB 없음: '{path}'. 새 파일 생성")
+            print(f"⚠️ [V5.1] DB 없음: '{path}'. 새 파일 생성")
             try:
                 if not self.robot:
                     print("🛑 로봇 미연결로 DB 생성 불가")
@@ -465,12 +518,12 @@ class FR5OSCBridge:
                 default_data = {
                     "home": {
                         "val": self._round_pose(c_home),
-                        "joint_val": self._round_pose(j_home, is_joint=True),
+                        "joint_val": self._round_pose(j_home),
                         "ts": time.strftime("%Y-%m-%d %H:%M:%S")
                     }
                 }
                 if self._save_db(default_data):
-                    print(f"✅ [V05] 새 DB 생성 완료")
+                    print(f"✅ [V5.1] 새 DB 생성 완료")
                     return default_data
                 else:
                     return {}
@@ -516,7 +569,7 @@ class FR5OSCBridge:
             
             self.temp_pose = {
                 "val": self._round_pose(c_pose),
-                "joint_val": self._round_pose(j_pose, is_joint=True)
+                "joint_val": self._round_pose(j_pose)
             }
             self.temp_pose_timestamp = time.time()
             
@@ -585,8 +638,6 @@ class FR5OSCBridge:
             pose_A = self.temp_pose  # 현재 temp에 저장된 위치
             
             with self.db_lock:
-                pose_B = self.db_data.get(slot_name)  # DB의 기존 슬롯 위치
-                
                 # temp → slot 저장
                 self.db_data[slot_name] = pose_A.copy()
                 self.db_data[slot_name]["ts"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -603,7 +654,7 @@ class FR5OSCBridge:
             if self.ui_client:
                 self.ui_client.send_message("/ui/record/success", target_slot)
             
-            # temp 클리어 (순환 armed 제거 - 단순화)
+            # temp 클리어
             self.temp_pose = None
             self.temp_pose_timestamp = 0.0
             if self.ui_client:
@@ -641,7 +692,7 @@ class FR5OSCBridge:
                 self.target_slot_ui = target_slot
                 self._send_robot_operation(self.current_slot, self.target_slot_ui, 1, 0)
 
-                move_vel = max(0.0, min(100.0, float(self.jog_vel_pct)))
+                move_vel = max(0.0, min(100.0, float(self.vel_pct)))
 
                 err = 0
                 
@@ -662,7 +713,8 @@ class FR5OSCBridge:
                         vel=move_vel
                     )
                 
-                if err is None: err = 0
+                if err is None:
+                    err = 0
 
                 if err != 0:
                     print(f"🛑 이동 명령 실패 (코드 {err})")
@@ -691,7 +743,8 @@ class FR5OSCBridge:
 
     def _emit_slot_leds(self, selected:int):
         """프리셋 슬롯 LED 갱신"""
-        if not self.ui_client: return
+        if not self.ui_client:
+            return
         try:
             keys = sorted(SLOTS.keys())
             for k in keys:
@@ -702,7 +755,8 @@ class FR5OSCBridge:
 
     def _emit_slot_leds_off(self):
         """종료 시 모든 슬롯 LED OFF"""
-        if not self.ui_client: return
+        if not self.ui_client:
+            return
         try:
             keys = sorted(SLOTS.keys())
             for k in keys:
@@ -725,16 +779,20 @@ class FR5OSCBridge:
         """텔레메트리 스레드 시작"""
         self.telemetry_thread = threading.Thread(target=self._telemetry_loop, daemon=True)
         self.telemetry_thread.start()
-        print("[DBG] 텔레메트리 스레드 시작")
 
     def _telemetry_loop(self):
-        """메인 텔레메트리 루프 - 단순화"""
+        """메인 텔레메트리 루프"""
         t_pose = t_hb = 0.0
+        
+        # 텔레메트리 변수 초기화
+        self._last_comm_ok = None
+        self._last_system_state = None
+        self.seq_counter = 0
+        self.last_alarm_code = None
         
         while self.robot is None and not self.stop_flag:
             time.sleep(0.1)
         
-        print("[DBG] 텔레메트리 루프 정상 가동")
         while not self.stop_flag:
             now = time.time()
 
@@ -760,10 +818,7 @@ class FR5OSCBridge:
             self.temp_pose = None
             self.temp_pose_timestamp = 0.0
             if self.ui_client:
-                try:
-                    self.ui_client.send_message("/ui/record/armed", 0)
-                except:
-                    pass
+                self.ui_client.send_message("/ui/record/armed", 0)
 
     def _send_telemetry(self):
         """10Hz 텔레메트리 전송"""
@@ -777,8 +832,8 @@ class FR5OSCBridge:
             self.axim_client.send_message("/r/joint", q)
             self.axim_client.send_message("/r/tcp", tcp)
             self.axim_client.send_message("/r/tcp_speed", tcp_speed)
-        except:
-            pass
+        except Exception as e:
+            print(f"[WRN] 텔레메트리 전송 실패: {e}")
 
     def _check_and_send_status(self):
         """상태 평가, alarm, HB 전송 - 통합"""
@@ -847,7 +902,8 @@ class FR5OSCBridge:
 
     def _send_robot_operation(self, cur:int, tgt:int, moving:int, arrived:int):
         """robot_operation 전송"""
-        if not self.axim_client: return
+        if not self.axim_client:
+            return
         try:
             self.axim_client.send_message("/vp/robot_operation", [int(cur), int(tgt), int(moving), int(arrived)])
         except Exception as e:
@@ -855,7 +911,8 @@ class FR5OSCBridge:
 
     def _send_robot_status(self, system_state:int, seq:int):
         """robot_status 전송"""
-        if not self.axim_client: return
+        if not self.axim_client:
+            return
         try:
             self.axim_client.send_message("/vp/robot_status", [int(system_state), int(seq)])
         except Exception as e:
@@ -863,7 +920,8 @@ class FR5OSCBridge:
 
     def _send_alarm(self, code:int, message:str):
         """alarm 전송"""
-        if not self.axim_client: return
+        if not self.axim_client:
+            return
         if code == self.last_alarm_code and code != ALARM_OK:
              return
         try:
