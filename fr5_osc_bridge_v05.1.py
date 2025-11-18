@@ -209,6 +209,10 @@ class FR5OSCBridge:
 
         self.disp.map("/fr5/jog/vel", self._cb_vel_arg)
         self.disp.map("/fr5/jog/vel/get", self._get_vel)
+        self.disp.map("/fr5/jog/rx0", self._cb_reset_rx)
+        self.disp.map("/fr5/jog/ry0", self._cb_reset_ry)
+        self.disp.map("/fr5/jog/rz0", self._cb_reset_rz)
+        self.disp.map("/fr5/jog/ra0", self._cb_reset_ra)
         self.disp.map("/robot/move", self._cb_move_slot)
         self.disp.map("/robot/record/temp", self._cb_record_temp)
         self.disp.map("/robot/terminate", self._cb_terminate)
@@ -425,6 +429,69 @@ class FR5OSCBridge:
             self.ui_client.send_message("/ui/vel/value", 0.0)
         except Exception as e:
             print("[WRN] UI Speed LED OFF 송신 실패:", e)
+
+    def _cb_reset_rx(self, address, *args):
+        """rx 값을 0으로 리셋"""
+        self._reset_orientation(axis="rx")
+
+    def _cb_reset_ry(self, address, *args):
+        """ry 값을 0으로 리셋"""
+        self._reset_orientation(axis="ry")
+
+    def _cb_reset_rz(self, address, *args):
+        """rz 값을 0으로 리셋"""
+        self._reset_orientation(axis="rz")
+
+    def _cb_reset_ra(self, address, *args):
+        """rx, ry, rz 모두 0으로 리셋"""
+        self._reset_orientation(axis="all")
+
+    def _reset_orientation(self, axis):
+        """현재 위치에서 orientation을 0으로 리셋"""
+        if self.is_busy:
+            print(f"🚫 Orientation 리셋 거부: 로봇 이동 중")
+            return
+
+        try:
+            # 현재 TCP 위치 읽기
+            err, current_pose = self.robot.GetActualTCPPose(0)
+            if err != 0:
+                print(f"🛑 GetActualTCPPose 실패: err={err}")
+                return
+
+            # orientation 수정
+            target_pose = list(current_pose)
+            if axis == "rx":
+                target_pose[3] = 0.0
+                print(f"[ORIENT] rx → 0 (현재 위치 유지)")
+            elif axis == "ry":
+                target_pose[4] = 0.0
+                print(f"[ORIENT] ry → 0 (현재 위치 유지)")
+            elif axis == "rz":
+                target_pose[5] = 0.0
+                print(f"[ORIENT] rz → 0 (현재 위치 유지)")
+            elif axis == "all":
+                target_pose[3] = 0.0
+                target_pose[4] = 0.0
+                target_pose[5] = 0.0
+                print(f"[ORIENT] rx, ry, rz → 0 (현재 위치 유지)")
+
+            # MoveCart로 이동
+            err = self.robot.MoveCart(
+                desc_pos=target_pose,
+                tool=self.TOOL_IDX,
+                user=self.USER_IDX,
+                vel=self.vel_pct
+            )
+
+            if err != 0:
+                print(f"🛑 Orientation 리셋 실패: err={err}")
+            else:
+                print(f"✅ Orientation 리셋 완료")
+
+        except Exception as e:
+            print(f"🛑 _reset_orientation 예외: {e}")
+            traceback.print_exc()
 
     # -----------------------------------------------------
     # --- 3. 프리셋 리스너 ---
