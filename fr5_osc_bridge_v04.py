@@ -364,14 +364,6 @@ class FR5OSCBridge:
         print("[FR5] RPC closed. Bye.")
         sys.exit(0)
 
-    def _cb_terminate(self, address: str, *args):
-        """
-        Callback for /robot/terminate OSC message.
-        """
-        print(f"Received OSC message on {address}: {args}")
-        print("Terminating bridge...")
-        sys.exit()
-
     # -----------------------------------------------------
     # --- 2. 조그 컨트롤러 (Script 1) 기능 ---
     # -----------------------------------------------------
